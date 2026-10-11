@@ -1,0 +1,37 @@
+# AirStrings defaults. Every option is optional; copy this file and pass --config.
+
+[gestures]
+harmony_side = "left"          # hand that picks chords; the other hand plays
+strum_line_y = 0.55            # fraction of image height (0 = top)
+min_strum_speed = 3.0          # hand-lengths/second needed to register a hit
+full_strum_speed = 16.0        # ...and for a full-velocity hit
+refractory_s = 0.09
+lost_gap_s = 0.25
+settle_s = 0.08                # finger count must hold this long to change chord
+seventh_zone_y = 0.35          # chord hand above this line adds a 7th
+seventh_zone_hysteresis = 0.06
+switch_hold_s = 1.0            # hold both fists this long to swap instrument
+smoothing_min_cutoff = 2.0
+smoothing_beta = 6.0
+
+[gestures.chord_map]           # finger count -> scale degree (1 = I ... 7 = vii)
+1 = 1                          # I
+2 = 4                          # IV
+3 = 5                          # V
+4 = 6                          # vi
+5 = 2                          # ii
+
+[audio]
+sample_rate = 44100
+blocksize = 256
+max_voices = 48
+master_gain = 0.8
+prewarm = true
+
+[app]
+camera_index = 0
+width = 1280
+height = 720
+key = "C"
+instrument = "guitar"
+mode = "free"                  # "free" | "sequence"
