@@ -13,7 +13,7 @@ from enum import Enum
 
 from airstrings.audio.events import AudioEvent
 from airstrings.engine import commands as C
-from airstrings.gestures.types import ChordIntent, Trigger
+from airstrings.gestures.types import ChordIntent, Release, Trigger
 from airstrings.instruments import Instrument, PlayContext, create_instrument, instrument_names
 from airstrings.music.harmony import Harmonizer
 from airstrings.music.sequence import DEMO_SEQUENCES, Sequence, SequenceCursor, StepKind, parse_sequence
@@ -26,8 +26,16 @@ class Mode(Enum):
 
 
 class PerformanceState:
-    def __init__(self, key: Key, instrument: str = "guitar", mode: Mode = Mode.FREE, auto_harmony: bool = True):
+    def __init__(
+        self,
+        key: Key,
+        instrument: str = "guitar",
+        mode: Mode = Mode.FREE,
+        auto_harmony: bool = True,
+        hold_damp_s: float = 0.35,
+    ):
         self.key = key
+        self.hold_damp_s = hold_damp_s
         self.mode = mode
         self.auto_harmony = auto_harmony
         self.degree: int | None = 1  # None = chord hand is a fist -> silent
@@ -94,6 +102,12 @@ class PerformanceState:
                 events += self.instrument.on_accompaniment(self._ctx(), chord, trigger)
         return events + self.instrument.on_step(self._ctx(), step, trigger)
 
+    def on_release(self, release: Release) -> list[AudioEvent]:
+        """A held pinch opened. Quick taps ring out; a long hold means 'stop' and damps."""
+        if release.held_s < self.hold_damp_s or (self.mode is Mode.FREE and self.degree is None):
+            return []
+        return self.instrument.on_release(self._ctx(), release)
+
     # ---- commands --------------------------------------------------------------
     def apply(self, command: C.Command) -> list[AudioEvent]:
         match command:
@@ -122,7 +136,7 @@ class PerformanceState:
                 self.accompaniment = None
                 self._notify("sequence reset")
                 return []
-        return []  # NudgeStrumLine and unknown commands are handled by the session
+        return []  # NudgePinch and unknown commands are handled by the session
 
     def _switch(self, name: str) -> list[AudioEvent]:
         if name == self.instrument.name:

@@ -58,5 +58,7 @@ class ResetSequence(Command):
 
 
 @dataclass(frozen=True)
-class NudgeStrumLine(Command):
+class NudgePinch(Command):
+    """Make pinching easier (+) or harder (-)."""
+
     delta: float

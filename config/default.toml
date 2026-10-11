@@ -1,18 +1,21 @@
 # AirStrings defaults. Every option is optional; copy this file and pass --config.
 
 [gestures]
-harmony_side = "left"          # hand that picks chords; the other hand plays
-strum_line_y = 0.55            # fraction of image height (0 = top)
-min_strum_speed = 3.0          # hand-lengths/second needed to register a hit
-full_strum_speed = 16.0        # ...and for a full-velocity hit
-refractory_s = 0.09
-lost_gap_s = 0.25
+harmony_side = "left"          # hand that picks chords; the other hand pinches to play
+pinch_on = 0.30                # thumb-to-fingertip distance (in hand-lengths) that counts as a pinch;
+                               # raise it if pinches are missed, lower it if they fire by accident
+pinch_off = 0.55               # farther than this lets go
+pinch_margin = 0.12            # the pinching fingertip must beat the next-nearest by this much
+pinch_min_reach = 0.9          # fingertip must be this far from the wrist (rejects a closed fist)
+pinch_refractory_s = 0.07
+pinch_slow_speed = 1.5         # closing speed (hand-lengths/second) of the softest hit...
+pinch_fast_speed = 8.0         # ...and of the loudest
+min_intensity = 0.45           # how soft the softest hit is (0..1)
+hold_damp_s = 0.35             # holding a pinch longer than this damps the sound when you let go
 settle_s = 0.08                # finger count must hold this long to change chord
 seventh_zone_y = 0.35          # chord hand above this line adds a 7th
 seventh_zone_hysteresis = 0.06
 switch_hold_s = 1.0            # hold both fists this long to swap instrument
-smoothing_min_cutoff = 2.0
-smoothing_beta = 6.0
 
 [gestures.chord_map]           # finger count -> scale degree (1 = I ... 7 = vii)
 1 = 1                          # I

@@ -4,15 +4,20 @@ Play guitar and piano in the air. Your webcam watches your hands; one hand
 chooses the harmony, the other plays the rhythm. No musical training needed.
 
 ```
-   CHORD HAND (left)                    PLAYING HAND (right)
-   ┌─────────────────┐                  swing through the line  ─────────▼─────────
-   │ 1 finger  C     │                  fast swing = loud, slow = soft
-   │ 2 fingers F     │                  down/up swings = down/up strums
-   │ 3 fingers G     │                  closed hand = muted, open hand = ringing
-   │ 4 fingers Am    │
-   │ 5 fingers Dm    │   fist = silence      raise the hand = add a 7th
-   └─────────────────┘   both fists for 1 s = swap instrument
+   CHORD HAND (left)                    PLAYING HAND (right): pinch, don't wave
+   ┌─────────────────┐                  thumb + index   = play the chord
+   │ 1 finger  C     │                  thumb + middle  = bass note
+   │ 2 fingers F     │                  thumb + ring    = rolling arpeggio
+   │ 3 fingers G     │                  tap = a hit, hold = sustain, let go = stop
+   │ 4 fingers Am    │                  quicker pinch = louder
+   │ 5 fingers Dm    │
+   └─────────────────┘   fist = silence      raise the hand = add a 7th
+                         both fists for 1 s = swap instrument
 ```
+
+Only your fingers move: rest the playing hand wherever it is comfortable and
+tap. The window labels the three fingertips and lights up the one you are
+about to pinch.
 
 ## Quick start
 
@@ -23,7 +28,7 @@ pip install -e ".[dev]"
 
 airstrings play                                   # free play, guitar, key of C
 airstrings play --instrument piano --key Am
-airstrings play --sequence "C-D-D-A-G-E-B"        # follow-along: one swing = next note
+airstrings play --sequence "C-D-D-A-G-E-B"        # follow-along: one pinch = next note
 airstrings play --sequence "0 2 3 5 3 2 0 -"      # guitar fret numbers
 airstrings play --sequence "C G Am F"             # chord progression
 airstrings play --demo-sequence twinkle
@@ -38,20 +43,20 @@ Without a camera or sound card:
 ```bash
 airstrings demo --out demo.wav        # scripted performance rendered to a WAV
 airstrings parse "C-D-D-A-G-E-B"      # check how a sequence is understood
-pytest                                # 94 tests, all headless
+pytest                                # 119 tests, all headless
 ```
 
 Keys in the window: `1`/`2` instrument, `Tab` next, `m` free/sequence mode,
-`r` restart sequence, `,` `.` transpose, `n` major/minor, `[` `]` move the
-strum line, `q` quit. Options live in [`config/default.toml`](config/default.toml).
+`r` restart sequence, `,` `.` transpose, `n` major/minor, `]` / `[` make pinching
+easier / harder to trigger, `q` quit. Options live in [`config/default.toml`](config/default.toml).
 
 ## Sequence notation
 
 | Style | Example | Meaning |
 |---|---|---|
-| Note names | `C D D A G E B`, `C-D-D-A-G-E-B`, `C5`, `F#3`, `Bb` | one note per swing |
+| Note names | `C D D A G E B`, `C-D-D-A-G-E-B`, `C5`, `F#3`, `Bb` | one note per pinch |
 | Fret numbers | `0 2 3 5`, `5:3` | fret on the default string, or `string:fret` |
-| Chords | `Am F C G` | one strum per swing |
+| Chords | `Am F C G` | one strum per pinch |
 | Rests | `-` `.` `_` | skip a beat |
 
 In sequence mode the chord hand is not needed: a small harmonizer picks a

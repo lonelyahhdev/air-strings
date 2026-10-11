@@ -19,10 +19,11 @@ def test_overlay_draws_in_every_state():
     backend = OfflineBackend(Mixer())
     session = Session(cfg, backend.submit)
     overlay = Overlay()
+    pat = ("chord", "bass", "arp", "hold")
     script = [
-        Segment(1.0, 2),
-        Segment(1.0, 3, high=True, command=C.SwitchInstrument("piano")),
-        Segment(1.0, 1, command=C.LoadSequence("C D E")),
+        Segment(1.0, 2, pat),
+        Segment(1.0, 3, pat, high=True, command=C.SwitchInstrument("piano")),
+        Segment(1.0, 1, pat, command=C.LoadSequence("C D E")),
     ]
     snaps = run_script(session, backend, script)
     for snap in (snaps[5], snaps[40], snaps[-1]):
@@ -33,15 +34,24 @@ def test_overlay_draws_in_every_state():
         overlay.draw(np.zeros((*size, 3), np.uint8), snaps[40])
 
 
-def test_overlay_strum_flash_changes_pixels():
+def test_overlay_pinch_feedback_changes_pixels():
     cfg = Config()
     backend = OfflineBackend(Mixer())
     session = Session(cfg, backend.submit)
-    snaps = run_script(session, backend, [Segment(1.5, 1)])
-    flashed = next(s for s in snaps if s.last_trigger and s.t - s.last_trigger.t < 0.05)
-    quiet = snaps[0]
-    a, b = (Overlay().draw(np.zeros((720, 1280, 3), np.uint8), s) for s in (flashed, quiet))
+    snaps = run_script(session, backend, [Segment(1.5, 1, ("chord",), bpm=60)])
+    pinched = next(s for s in snaps if s.pinch_active and s.last_trigger and s.t - s.last_trigger.t < 0.05)
+    quiet = snaps[-1]  # open hand, flash long gone
+    a, b = (Overlay().draw(np.zeros((720, 1280, 3), np.uint8), s) for s in (pinched, quiet))
     assert (a != b).any()
+
+
+def test_overlay_without_a_playing_hand_still_draws():
+    from airstrings.tracking.types import TrackingFrame
+
+    session = Session(Config(), lambda events: None)
+    snap = session.process(TrackingFrame(0.0))
+    out = Overlay().draw(np.zeros((720, 1280, 3), np.uint8), snap)
+    assert out.any()
 
 
 def test_key_to_command_mapping():
@@ -49,6 +59,7 @@ def test_key_to_command_mapping():
     assert key_to_command(ord("2")) == C.SwitchInstrument("piano")
     assert key_to_command(ord("9")) is None
     assert key_to_command(ord("m")) == C.ToggleMode()
+    assert key_to_command(ord("]")) == C.NudgePinch(0.02) and key_to_command(ord("[")) == C.NudgePinch(-0.02)
     assert key_to_command(ord(".")) == C.TransposeKey(1)
     assert key_to_command(255) is None and key_to_command(-1) is None
 
@@ -56,12 +67,12 @@ def test_key_to_command_mapping():
 def test_load_config_overrides_and_validation(tmp_path):
     path = tmp_path / "c.toml"
     path.write_text(
-        '[gestures]\nharmony_side = "right"\nstrum_line_y = 0.6\n[gestures.chord_map]\n1 = 1\n2 = 5\n'
+        '[gestures]\nharmony_side = "right"\npinch_on = 0.4\n[gestures.chord_map]\n1 = 1\n2 = 5\n'
         '[app]\nkey = "Am"\ninstrument = "piano"\n'
     )
     cfg = load_config(path)
     assert cfg.gestures.harmony_side == "right" and cfg.rhythm_side == "left"
-    assert cfg.gestures.chord_map == {1: 1, 2: 5}
+    assert cfg.gestures.chord_map == {1: 1, 2: 5} and cfg.gestures.pinch_on == 0.4
     assert cfg.app.key == "Am"
     path.write_text("[gestures]\nbogus = 1\n")
     with pytest.raises(ValueError, match="bogus"):

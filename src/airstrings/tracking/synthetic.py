@@ -13,10 +13,14 @@ def make_hand(
     center: tuple[float, float] = (0.5, 0.5),
     length: float = 0.15,
     aspect: float = 16 / 9,
+    pinch: str | None = None,
+    pinch_amount: float = 1.0,
 ) -> Hand:
     """A palm-forward, fingers-up hand whose palm centre is near ``center``.
 
-    ``length`` is wrist -> middle knuckle in image-height units.
+    ``length`` is wrist -> middle knuckle in image-height units.  ``pinch`` is
+    ``"index"``, ``"middle"``, ``"ring"`` or ``"pinky"``: the thumb tip moves toward
+    that fingertip (``pinch_amount`` 0 = where it was, 1 = touching).
     """
     cx, cy = center
     L = length
@@ -51,6 +55,13 @@ def make_hand(
     else:  # folded across the palm toward the pinky
         pts[LM.THUMB_IP] = pts[LM.THUMB_MCP] + np.array([-s * 0.10 * L, -0.15 * L])
         pts[LM.THUMB_TIP] = pts[LM.THUMB_MCP] + np.array([-s * 0.35 * L, -0.10 * L])
+
+    if pinch is not None:
+        tip = {"index": LM.INDEX_TIP, "middle": LM.MIDDLE_TIP, "ring": LM.RING_TIP, "pinky": LM.PINKY_TIP}[pinch]
+        amount = min(max(pinch_amount, 0.0), 1.0)
+        start = pts[LM.THUMB_TIP].copy()
+        pts[LM.THUMB_TIP] = start + (pts[tip] - start) * amount
+        pts[LM.THUMB_IP] = pts[LM.THUMB_IP] + (pts[tip] - pts[LM.THUMB_IP]) * amount * 0.6
 
     lm = np.zeros((21, 3), dtype=np.float32)
     lm[:, 0] = pts[:, 0] / aspect

@@ -9,14 +9,18 @@ from airstrings.demo import Segment, default_script, run_script
 from airstrings.engine import commands as C
 from airstrings.engine.session import Session
 from airstrings.engine.state import Mode, PerformanceState
-from airstrings.gestures.types import ChordIntent, Direction, Trigger
+from airstrings.gestures.types import ChordIntent, Hit, Release, Trigger
 from airstrings.instruments import Instrument, PlayContext, create_instrument, instrument_names, register_instrument
 from airstrings.music.sequence import StepKind, parse_sequence
 from airstrings.music.theory import Chord, Key
 
 
-def trig(direction=Direction.DOWN, intensity=0.7, openness=1.0, t=0.0):
-    return Trigger(t, direction, intensity, 0.7, openness)
+def trig(kind=Hit.CHORD, intensity=0.7, t=0.0):
+    return Trigger(t, kind, intensity, (0.7, 0.5))
+
+
+def rel(kind=Hit.CHORD, held=1.0, t=0.0):
+    return Release(t, kind, held)
 
 
 def notes(events):
@@ -34,43 +38,61 @@ def test_registry_has_builtin_instruments():
         create_instrument("kazoo")
 
 
-def test_guitar_downstroke_is_low_to_high_with_stagger():
-    ev = notes(create_instrument("guitar").on_trigger(ctx("C"), trig()))
+def test_guitar_chord_hit_is_a_low_to_high_strum_with_stagger():
+    ev = notes(create_instrument("guitar").on_trigger(ctx("C"), trig(Hit.CHORD)))
     assert [e.midi for e in ev] == [48, 52, 55, 60, 64, 67]
     assert [e.delay for e in ev] == sorted(e.delay for e in ev) and ev[0].delay == 0
     assert all(e.timbre == "guitar" for e in ev)
 
 
-def test_guitar_upstroke_is_high_to_low_and_lighter():
+def test_guitar_bass_hit_alternates_root_and_fifth_and_does_not_damp_the_chord():
     g = create_instrument("guitar")
-    down, up = notes(g.on_trigger(ctx(), trig())), notes(g.on_trigger(ctx(), trig(Direction.UP)))
-    assert [e.midi for e in up] == sorted((e.midi for e in up), reverse=True)
-    assert len(up) == 4 and up[0].velocity < down[-1].velocity
+    first, second, third = (g.on_trigger(ctx("C"), trig(Hit.BASS)) for _ in range(3))
+    assert [[e.midi for e in notes(x)] for x in (first, second, third)] == [[48], [55], [48]]
+    assert all(not isinstance(e, ReleaseAll) for x in (first, second) for e in x)
+    g.on_chord_change(ctx("G"), Chord.parse("G"))  # a new chord restarts on the root
+    g.on_trigger(ctx("C"), trig(Hit.BASS))
+    assert [e.midi for e in notes(g.on_trigger(ctx("G"), trig(Hit.BASS)))] == [43 + 7]
+    g.on_chord_change(ctx("G"), Chord.parse("G"))
+    assert [e.midi for e in notes(g.on_trigger(ctx("G"), trig(Hit.BASS)))] == [43]
 
 
-def test_guitar_strum_damps_previous_and_palm_mute_shortens():
-    g = create_instrument("guitar")
-    events = g.on_trigger(ctx(), trig())
+def test_guitar_arp_picks_strings_one_at_a_time_ascending():
+    ev = notes(create_instrument("guitar").on_trigger(ctx("Am"), trig(Hit.ARP)))
+    assert [e.midi for e in ev] == sorted(e.midi for e in ev) and len(ev) == 6
+    gaps = [b.delay - a.delay for a, b in zip(ev, ev[1:])]
+    assert all(g == pytest.approx(0.075) for g in gaps)
+
+
+def test_guitar_new_chord_hit_damps_the_previous_one():
+    events = create_instrument("guitar").on_trigger(ctx(), trig())
     assert isinstance(events[0], ReleaseAll) and events[0].timbre == "guitar"
-    muted = notes(g.on_trigger(ctx(), trig(openness=0.1)))
-    assert all(e.duration and e.duration < 0.5 for e in muted)
-    assert all(e.duration is None for e in notes(events))
+    assert all(e.duration is None for e in notes(events))  # taps ring out naturally
 
 
-def test_harder_swing_means_louder_and_tighter_strum():
+def test_harder_pinch_means_louder_and_tighter_strum():
     g = create_instrument("guitar")
     soft, hard = notes(g.on_trigger(ctx(), trig(intensity=0.1))), notes(g.on_trigger(ctx(), trig(intensity=1.0)))
     assert hard[0].velocity > soft[0].velocity
     assert hard[-1].delay < soft[-1].delay
 
 
-def test_piano_down_has_bass_and_block_chord_and_up_rolls():
+def test_piano_hits():
     p = create_instrument("piano")
-    down = notes(p.on_trigger(ctx("Am"), trig()))
-    assert min(e.midi for e in down) < 48 and {e.midi % 12 for e in down} == {9, 0, 4}
-    up = notes(p.on_trigger(ctx("Am"), trig(Direction.UP)))
-    assert [e.midi for e in up] == sorted(e.midi for e in up)
-    assert up[-1].delay > up[0].delay
+    block = notes(p.on_trigger(ctx("Am"), trig(Hit.CHORD)))
+    assert min(e.midi for e in block) < 48 and {e.midi % 12 for e in block} == {9, 0, 4}
+    assert max(e.delay for e in block) < 0.03  # a block chord, not a roll
+    bass = [e.midi for e in notes(p.on_trigger(ctx("Am"), trig(Hit.BASS)))]
+    assert bass == [45] and [e.midi for e in notes(p.on_trigger(ctx("Am"), trig(Hit.BASS)))] == [52]
+    arp = notes(p.on_trigger(ctx("Am"), trig(Hit.ARP)))
+    assert [e.midi for e in arp] == sorted(e.midi for e in arp)
+    assert arp[-1].delay > 0.2 and arp[0].midi < 48
+
+
+def test_release_damping_fades_are_instrument_specific():
+    for name, fade in (("guitar", 0.25), ("piano", 0.4)):
+        events = create_instrument(name).on_release(ctx(), rel())
+        assert events == [ReleaseAll(name, fade)]
 
 
 def test_instruments_sequence_steps():
@@ -227,6 +249,14 @@ def test_listeners_hear_state_changes():
     assert heard == ["instrument: piano", "mode: sequence"]
 
 
+def test_state_release_rules():
+    s = PerformanceState(Key.parse("C"), "piano", hold_damp_s=0.35)
+    assert s.on_release(rel(held=0.1)) == []  # a tap rings out
+    assert s.on_release(rel(held=0.5)) == [ReleaseAll("piano", 0.4)]  # a long hold damps on release
+    s.apply_chord_intent(intent(None, fingers=0))
+    assert s.on_release(rel(held=0.5)) == []  # already silenced by the chord hand
+
+
 def test_step_kind_enum_is_exposed():
     assert StepKind.NOTE.value == "note"
 
@@ -252,17 +282,40 @@ def test_end_to_end_scripted_performance():
     assert {("piano", "free", n) for n in ("C", "F", "G", "Am")} <= chords_by_instrument
     assert any(s.mode == "sequence" for s in snaps)
     assert snaps[-1].sequence_upcoming  # ribbon has something to show
+    assert {s.last_trigger.kind for s in snaps if s.last_trigger} == set(Hit)
 
-    # loudness differs while strumming vs. after the final rest (it rings, then decays)
+    # the first bar is playing, and the ring-out at the end is quieter than playing
     sr = 44100
     rms = lambda a, b: float(np.sqrt((audio[int(a * sr) : int(b * sr)] ** 2).mean()))  # noqa: E731
     assert rms(0.5, 1.9) > 0.02 and rms(0.0, 0.2) < rms(0.5, 1.9)
 
 
+def test_sequence_mode_one_pinch_plays_the_next_note():
+    session, backend = make_session()
+    session.dispatch(C.LoadSequence("C D E"))
+    snaps = run_script(session, backend, [Segment(2.0, 1, ("chord", "bass", "arp"), bpm=60)])
+    first_hit = next(s for s in snaps if s.last_trigger)
+    assert list(first_hit.sequence_upcoming[:2]) == ["D", "E"]  # C has just been played
+    assert list(snaps[-1].sequence_upcoming[:3]) == ["E", "C", "D"]  # two pinches (chord, bass) -> two notes
+    assert np.abs(backend.audio()).max() > 0.1
+
+
+def test_long_hold_then_release_damps_but_a_tap_rings_out():
+    sr = 44100
+
+    def after_rms(pattern):
+        session, backend = make_session()
+        run_script(session, backend, [Segment(1.0, 1, pattern, bpm=120)])
+        audio = backend.audio()
+        return float(np.sqrt((audio[int(0.75 * sr) : int(0.95 * sr)] ** 2).mean()))
+
+    held, tapped = after_rms(("hold", "rest")), after_rms(("chord", "rest"))
+    assert tapped > 0.01  # a tap is still ringing 0.75 s later
+    assert held < tapped * 0.2  # held 0.4 s, then let go: damped
+
+
 def test_gesture_driven_instrument_swap():
     session, backend = make_session()
-    fists = [Segment(0.5, 0, strum_hz=0.0), Segment(1.5, 0, strum_hz=0.0)]
-    # both fists: the demo's rhythm hand is open, so drive the swap with explicit frames
     from airstrings.tracking.synthetic import fingers, make_hand
     from airstrings.tracking.types import Side, TrackingFrame
 
@@ -273,7 +326,21 @@ def test_gesture_driven_instrument_swap():
         t += 1 / 30
     assert snap.instrument == "piano"
     assert snap.switch_progress == 1.0
-    assert fists  # (segments above only document the scenario)
+    assert snap.last_trigger is None  # fists must not be mistaken for pinches
+
+
+def test_fist_on_chord_hand_silences_playing_hand():
+    session, backend = make_session()
+    run_script(session, backend, [Segment(0.3, 0), Segment(1.0, 0, ("chord",), bpm=120)])  # let the fist settle first
+    assert not backend.audio().any()
+
+
+def test_pinch_state_is_exposed_for_the_overlay():
+    session, backend = make_session()
+    snaps = run_script(session, backend, [Segment(1.0, 1, ("arp",), bpm=60)])
+    assert any(s.pinch_active is Hit.ARP for s in snaps)
+    assert all(s.pinch_ratios is not None for s in snaps)
+    assert snaps[0].pinch_on == pytest.approx(Config().gestures.pinch_on)
 
 
 def test_snapshot_ladder_reflects_key_and_seventh():
@@ -287,14 +354,19 @@ def test_snapshot_ladder_reflects_key_and_seventh():
     assert [n for _, n in session.process(frame).chord_ladder][:3] == ["G", "C", "D"]
 
 
-def test_strum_line_nudge_is_clamped():
+def test_pinch_sensitivity_nudge_is_clamped_and_reported():
+    from airstrings.tracking.types import TrackingFrame
+
     session, _ = make_session()
+    session.dispatch(C.NudgePinch(0.05))
+    assert session.pinch.on == pytest.approx(0.35)
+    assert session.process(TrackingFrame(0.0)).status == "pinch sensitivity 0.35"
     for _ in range(100):
-        session.dispatch(C.NudgeStrumLine(0.05))
-    assert session.strum.line_y == pytest.approx(0.9)
+        session.dispatch(C.NudgePinch(0.05))
+    assert session.pinch.on == pytest.approx(0.6)
     for _ in range(100):
-        session.dispatch(C.NudgeStrumLine(-0.05))
-    assert session.strum.line_y == pytest.approx(0.15)
+        session.dispatch(C.NudgePinch(-0.05))
+    assert session.pinch.on == pytest.approx(0.12)
 
 
 def test_harmony_side_can_be_swapped_for_lefties():

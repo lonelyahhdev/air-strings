@@ -8,11 +8,14 @@ different jobs, and both are meant to be learnable in seconds:
 | Hand | Job | Gestures |
 |---|---|---|
 | Chord hand | *What* harmony | finger count → chord (I IV V vi ii by default), hand height → adds a 7th, fist → silence |
-| Playing hand | *When* and *how hard* | palm swing through a horizontal line → hit; swing direction → down/up; swing speed → velocity; hand openness → ringing vs. damped |
+| Playing hand | *When*, *what* and *how hard* | thumb touching a fingertip → hit: index = chord, middle = bass note, ring = arpeggio; closing speed → velocity; holding the pinch sustains, a long hold released damps |
 
-The strum line and chord ladder are drawn on screen, so users are guided
-without reading anything. Dynamics use speed measured in *hand-lengths per
-second*, so they don't change with how far the player stands from the camera.
+Only the fingers move. An earlier design had the player swing a palm through a
+line; it was tiring and inconsistent, so playing is now a pinch (like tapping
+a button in the air) and the hand can rest. The chord ladder and the labelled
+fingertips are drawn on screen, so users are guided without reading anything.
+Distances and speeds are measured in *hand-lengths*, so they don't change with
+how far the player stands from the camera.
 
 ## Pipeline
 
@@ -22,7 +25,8 @@ second*, so they don't change with how far the player stands from the camera.
                knows MediaPipe)        landmarks)      │   └──── Commands (keyboard / both-fists gesture)
                                                        ▼
                          ChordSelector ─► ChordIntent ─┐
-                         StrumDetector ─► Trigger ─────┼─► PerformanceState ─► Instrument ─► AudioEvents ─► Mixer ─► sound card
+                         PinchDetector ─► Trigger ─────┤
+                         PinchDetector ─► Release ─────┼─► PerformanceState ─► Instrument ─► AudioEvents ─► Mixer ─► sound card
                          SwitchDetector ─► Command ────┘    (state machine)     (Guitar/Piano)   NoteOn/ReleaseAll
 ```
 
@@ -33,9 +37,9 @@ the whole pipeline runs headless on synthetic hands (`airstrings demo`).
 
 ```
 src/airstrings/
-  tracking/     types (Hand, TrackingFrame), geometric features, One-Euro smoothing,
+  tracking/     types (Hand, TrackingFrame), geometric features (finger states, pinch distances),
                 MediaPipe adapter, synthetic hands for tests/demos
-  gestures/     ChordSelector, StrumDetector, SwitchDetector; gesture vocabulary (Trigger, ChordIntent)
+  gestures/     ChordSelector, PinchDetector, SwitchDetector; gesture vocabulary (Hit, Trigger, Release, ChordIntent)
   music/        theory (Key, Chord, voicings), sequence parser + cursor, melody Harmonizer
   instruments/  Instrument ABC + registry; guitar.py, piano.py
   engine/       commands, PerformanceState (the state machine), Session (wires it all)
@@ -66,7 +70,7 @@ Inputs are `ChordIntent`, `Trigger` and `Command`s; outputs are audio events.
 | Hand tracking | **MediaPipe Hand Landmarker** (Tasks API) | Two hands, 21 landmarks each, real-time on CPU, handedness included, no training. Alternatives (OpenPose, YOLO-pose) are heavier or lack finger landmarks. Wrapped behind `TrackingFrame`, so it can be swapped. |
 | Camera, overlay | **OpenCV** | Capture, drawing and a window in one dependency. A Qt/Pygame UI can replace `ui/` later because it only reads a `Snapshot`. |
 | Audio out | **sounddevice** (PortAudio) + **NumPy** | Callback API with low latency and sample-accurate scheduling; works on all three platforms. No sample libraries or soundfonts to ship. |
-| Synthesis | **Karplus-Strong** guitar, **additive** piano | Both are plucked/struck strings. Each note is rendered once into a buffer (vectorised NumPy, ~5-60 ms) and cached, so the audio callback only sums slices: cheap and glitch-free. Strum staggering is sample-accurate. |
+| Synthesis | **Karplus-Strong** guitar, **additive** piano | Both are plucked/struck strings. Each note is rendered once into a buffer (vectorised NumPy, ~5-60 ms) and cached, so the audio callback only sums slices: cheap and glitch-free. Strum and arpeggio staggering is sample-accurate. |
 | Alternatives considered | FluidSynth/soundfonts, pyo, pygame.mixer | Soundfonts sound richer but add a native dependency and large assets; pygame.mixer has no scheduling; pyo is harder to install. A soundfont timbre can be added later through the timbre registry. |
 
 Python ≥ 3.11 (uses `tomllib`, `match`). MediaPipe's Tasks API is required
@@ -75,7 +79,7 @@ Python ≥ 3.11 (uses `tomllib`, `match`). MediaPipe's Tasks API is required
 ## Extending
 
 **New instrument** (e.g. ukulele, bass, drums): subclass `Instrument` in
-`instruments/`, implement `on_trigger`, `on_step`, `on_accompaniment`, decorate
+`instruments/`, implement `on_trigger` (react to `Hit.CHORD` / `BASS` / `ARP`), `on_step`, `on_accompaniment` (and optionally `on_release`), decorate
 with `@register_instrument`, and import it in `instruments/__init__.py`. It
 appears in the UI tabs, number-key shortcuts and the both-fists cycle
 automatically. If it needs a new sound, add a renderer with
@@ -87,7 +91,9 @@ automatically. If it needs a new sound, add a renderer with
 
 ## Known limits and next steps
 
-* Timing resolution is one camera frame (~33 ms at 30 fps). `Trigger.t` is where the hit happened; a later improvement is to schedule the audio at `t` using the measured crossing time, and to run capture + tracking on their own thread so inference never delays the UI.
+* Timing resolution is one camera frame (~33 ms at 30 fps), and a pinch is only recognised once one fingertip is clearly nearest (this avoids mixing up neighbouring fingers but can cost a frame). Running capture + tracking on their own thread would stop inference from delaying the UI.
+* Pinch detection is purely geometric (thumb-to-fingertip distance in hand-lengths, with hysteresis, a nearest-fingertip margin and a fist guard). The knobs are `pinch_on` (live: `[` / `]`), `pinch_off`, `pinch_margin`, `pinch_min_reach` and the speed range for loudness. The pinky is tracked but reserved, so a pinky pinch is ignored rather than misread as ring.
+* Chords by finger count: raising the hand for 7ths still asks the chord hand to move; a thumb or palm-orientation gesture could replace it.
 * Finger counting uses a simple "tip farther than PIP from wrist" test. It works for palm-forward hands; sideways or strongly tilted hands will be less reliable. A small learned classifier or per-user calibration would improve it.
 * The first note of a not-yet-cached pitch is rendered on demand (up to ~60 ms for low piano notes). Sample caches are pre-warmed in the background at startup, so this only affects the first moments.
 * Mono output; guitar and piano are synthetic. A soundfont/sample backend would be the next step for realism.

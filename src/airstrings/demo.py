@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 from airstrings.audio.backend import OfflineBackend
@@ -17,17 +16,27 @@ from airstrings.tracking.synthetic import fingers, make_hand
 from airstrings.tracking.types import TrackingFrame
 
 FPS = 30
+_FINGER = {"chord": "index", "bass": "middle", "arp": "ring", "hold": "index"}
+_TAP = {0: 0.55, 1: 1.0, 2: 1.0, 3: 0.55}  # pinch closing over two frames, then opening
 
 
 @dataclass(frozen=True)
 class Segment:
     seconds: float
     fingers: int = 1  # chord hand finger count
-    strum_hz: float = 2.0  # full swings (down+up) per second; 0 = hand rests
+    # One entry per beat: "chord" | "bass" | "arp" (taps), "hold" (index pinch held most of the beat), "rest".
+    pattern: tuple[str, ...] = ()
+    bpm: float = 120.0
     high: bool = False  # chord hand raised into the 7th zone
     command: C.Command | None = None  # applied at the start of the segment
     harmony_visible: bool = True
-    swing_amplitude: float = 0.14
+
+
+def _pinch_amount(token: str, frame_in_beat: int, beat_frames: int) -> float:
+    if token == "hold":
+        last = max(int(beat_frames * 0.8), 3)
+        return 0.55 if frame_in_beat in (0, last) else (1.0 if frame_in_beat < last else 0.0)
+    return _TAP.get(frame_in_beat, 0.0)
 
 
 def run_script(session: Session, backend: OfflineBackend, segments: list[Segment]) -> list[Snapshot]:
@@ -39,12 +48,13 @@ def run_script(session: Session, backend: OfflineBackend, segments: list[Segment
     for seg in segments:
         if seg.command is not None:
             session.dispatch(seg.command)
+        beat_frames = max(int(round(FPS * 60 / seg.bpm)), 5)
+        hy = (cfg.seventh_zone_y - 0.12) if seg.high else 0.6
         for i in range(int(seg.seconds * FPS)):
-            phase = 2 * math.pi * seg.strum_hz * (i * dt)
-            # start moving upward-then-down so a downstroke is the first crossing
-            ry = cfg.strum_line_y - seg.swing_amplitude * math.sin(phase) if seg.strum_hz else cfg.strum_line_y - 0.2
-            hy = (cfg.seventh_zone_y - 0.12) if seg.high else 0.6
-            hands = [make_hand(session.rhythm_side, fingers(5), (0.72, ry))]
+            token = seg.pattern[(i // beat_frames) % len(seg.pattern)] if seg.pattern else "rest"
+            amount = _pinch_amount(token, i % beat_frames, beat_frames) if token != "rest" else 0.0
+            finger = _FINGER.get(token)
+            hands = [make_hand(session.rhythm_side, fingers(5), (0.72, 0.6), pinch=finger, pinch_amount=amount)]
             if seg.harmony_visible:
                 hands.append(make_hand(session.harmony_side, fingers(seg.fingers), (0.25, hy)))
             snaps.append(session.process(TrackingFrame(t, tuple(hands))))
@@ -54,15 +64,18 @@ def run_script(session: Session, backend: OfflineBackend, segments: list[Segment
 
 
 def default_script() -> list[Segment]:
+    guitar = ("bass", "chord", "bass", "chord")
+    piano = ("chord", "arp", "bass", "arp")
     return [
-        # Guitar: I - IV - V - vi, strumming
-        Segment(2.0, 1), Segment(2.0, 2), Segment(2.0, 3), Segment(2.0, 4),
-        Segment(2.0, 3, high=True),  # raised hand -> G7
+        # Guitar: I - IV - V - vi, boom-chick strumming
+        Segment(2.0, 1, guitar), Segment(2.0, 2, guitar), Segment(2.0, 3, guitar), Segment(2.0, 4, guitar),
+        Segment(2.0, 3, ("arp", "rest", "rest", "rest"), high=True),  # raised hand -> G7, one arpeggio
         # Swap to piano and play the same changes
-        Segment(2.0, 1, command=C.SwitchInstrument("piano")), Segment(2.0, 2), Segment(2.0, 3), Segment(2.0, 4),
-        # Linear sequence: one swing = one note, auto-harmonised
-        Segment(6.0, 1, strum_hz=1.5, command=C.LoadSequence("C D D A G E B")),
-        Segment(3.0, 1, strum_hz=0.0),  # let it ring out
+        Segment(2.0, 1, piano, command=C.SwitchInstrument("piano")), Segment(2.0, 2, piano),
+        Segment(2.0, 3, piano), Segment(2.0, 4, ("hold", "rest", "rest", "rest"), bpm=60),  # held chord, then let go
+        # Linear sequence: one pinch = one note, auto-harmonised
+        Segment(6.0, 1, ("chord",), bpm=100, command=C.LoadSequence("C D D A G E B")),
+        Segment(3.0, 1),  # let it ring out
     ]  # fmt: skip
 
 

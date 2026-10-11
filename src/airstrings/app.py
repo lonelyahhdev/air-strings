@@ -11,7 +11,7 @@ from airstrings.engine import commands as C
 from airstrings.engine.session import Session
 from airstrings.instruments import instrument_names
 
-KEY_HELP = "q quit | 1-9 instrument | tab next | m mode | r restart seq | , . transpose | n major/minor | [ ] line"
+KEY_HELP = "q quit | 1-9 instrument | tab next | m mode | r restart seq | , . transpose | n major/minor | [ ] pinch sensitivity"
 
 
 def key_to_command(key: int) -> C.Command | None:
@@ -27,8 +27,8 @@ def key_to_command(key: int) -> C.Command | None:
         ",": C.TransposeKey(-1),
         ".": C.TransposeKey(1),
         "n": C.ToggleKeyMode(),
-        "[": C.NudgeStrumLine(-0.02),
-        "]": C.NudgeStrumLine(0.02),
+        "[": C.NudgePinch(-0.02),  # harder to trigger
+        "]": C.NudgePinch(0.02),  # easier to trigger
     }.get(ch)
 
 

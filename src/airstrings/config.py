@@ -10,14 +10,18 @@ from typing import Any
 
 @dataclass
 class GestureConfig:
-    harmony_side: str = "left"  # which hand picks chords; the other one plays
-    # Strum line, as a fraction of image height (0 = top).
-    strum_line_y: float = 0.55
-    # Palm speed, in hand-lengths per second, mapped onto soft..loud.
-    min_strum_speed: float = 3.0
-    full_strum_speed: float = 16.0
-    refractory_s: float = 0.09
-    lost_gap_s: float = 0.25  # a gap this long resets motion tracking
+    harmony_side: str = "left"  # which hand picks chords; the other hand pinches to play
+    # Pinch = thumb tip touching a fingertip, measured in hand-lengths.
+    pinch_on: float = 0.30  # closer than this counts as a pinch (raise to make pinching easier)
+    pinch_off: float = 0.55  # farther than this lets go
+    pinch_margin: float = 0.12  # the pinching fingertip must beat the next-nearest by this much
+    pinch_min_reach: float = 0.9  # fingertip must be this far from the wrist (rejects a closed fist)
+    pinch_refractory_s: float = 0.07
+    # Closing speed (hand-lengths/second) mapped onto soft..loud; min_intensity is the softest hit.
+    pinch_slow_speed: float = 1.5
+    pinch_fast_speed: float = 8.0
+    min_intensity: float = 0.45
+    hold_damp_s: float = 0.35  # holding a pinch longer than this damps the sound when released
     settle_s: float = 0.08  # finger count must be stable this long to commit
     # Raising the harmony hand above this line adds a 7th to the chord.
     seventh_zone_y: float = 0.35
@@ -25,8 +29,6 @@ class GestureConfig:
     # finger count -> scale degree (I IV V vi ii: the common pop chords first)
     chord_map: dict[int, int] = field(default_factory=lambda: {1: 1, 2: 4, 3: 5, 4: 6, 5: 2})
     switch_hold_s: float = 1.0  # hold both fists this long to swap instrument
-    smoothing_min_cutoff: float = 2.0
-    smoothing_beta: float = 6.0
 
 
 @dataclass

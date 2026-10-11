@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from airstrings.audio.events import AudioEvent, ReleaseAll
-from airstrings.gestures.types import Trigger
+from airstrings.gestures.types import Release, Trigger
 from airstrings.music.sequence import SequenceStep
 from airstrings.music.theory import Chord, Key
 
@@ -27,10 +27,11 @@ class Instrument(ABC):
     name: ClassVar[str]  # registry id, also shown in the UI
     timbre: ClassVar[str]  # synth registry id
     midi_range: ClassVar[range] = range(36, 85)  # used to prewarm the sample cache
+    damp_fade: ClassVar[float] = 0.3  # fade-out when a long-held pinch is released
 
     @abstractmethod
     def on_trigger(self, ctx: PlayContext, trigger: Trigger) -> list[AudioEvent]:
-        """Free play: the playing hand hit; sound the selected chord."""
+        """Free play: a pinch closed; play the selected chord the way ``trigger.kind`` asks."""
 
     @abstractmethod
     def on_step(self, ctx: PlayContext, step: SequenceStep, trigger: Trigger) -> list[AudioEvent]:
@@ -43,6 +44,10 @@ class Instrument(ABC):
     def on_chord_change(self, ctx: PlayContext, chord: Chord) -> list[AudioEvent]:
         """Chord hand changed chord (free play). Default: nothing until the next hit."""
         return []
+
+    def on_release(self, ctx: PlayContext, release: Release) -> list[AudioEvent]:
+        """A pinch held longer than ``hold_damp_s`` was let go. Default: damp the sound."""
+        return self.silence(self.damp_fade)
 
     def silence(self, fade: float = 0.15) -> list[AudioEvent]:
         return [ReleaseAll(self.timbre, fade)]

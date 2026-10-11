@@ -58,11 +58,16 @@ def is_fist(hand: Hand) -> bool:
     return count_fingers(hand) == 0
 
 
-def openness(hand: Hand) -> float:
-    """0 = closed fist .. 1 = fully spread fingers (index..pinky)."""
+def pinch_ratios(hand: Hand) -> tuple[float, float, float, float]:
+    """Thumb-tip to fingertip distance for (index, middle, ring, pinky), in hand-lengths.
+
+    ~1.0 for a relaxed open hand, below ~0.3 when the fingertips touch.
+    """
     pts = iso_xy(hand)
-    vals = []
-    for mcp, _pip, tip in _FINGERS:
-        ratio = _dist(pts, LM.WRIST, tip) / max(_dist(pts, LM.WRIST, mcp), 1e-4)
-        vals.append(min(max((ratio - 1.0) / 0.8, 0.0), 1.0))
-    return float(np.mean(vals))
+    scale = hand_scale(hand)
+    return tuple(_dist(pts, LM.THUMB_TIP, tip) / scale for _mcp, _pip, tip in _FINGERS)  # type: ignore[return-value]
+
+
+def finger_reach(hand: Hand, tip: int) -> float:
+    """Wrist-to-fingertip distance in hand-lengths. Small when a finger is curled into a fist."""
+    return _dist(iso_xy(hand), LM.WRIST, tip) / hand_scale(hand)

@@ -4,8 +4,9 @@ Layout, designed so the player only has to look at the picture, not read docs:
 
 * chord hand side: a ladder "1 finger = C, 2 = F ..." with the active row lit,
   plus a dashed line above which the hand adds a 7th;
-* playing hand side: the strum line, which flashes and shows an arrow
-  (down/up, sized by strength) when a swing registers;
+* playing hand side: the three fingertips are labelled CHORD / BASS / ARP and a
+  line from the thumb to each brightens as they get close; a ring flashes where a
+  pinch registers;
 * top bar: instrument tabs, key, mode; bottom: the upcoming sequence ribbon.
 """
 
@@ -15,7 +16,8 @@ import cv2
 import numpy as np
 
 from airstrings.engine.session import Snapshot
-from airstrings.tracking.types import Side
+from airstrings.gestures.types import Hit
+from airstrings.tracking.types import LM, Side
 
 BONES = [
     (0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (5, 9), (9, 10), (10, 11),
@@ -30,7 +32,14 @@ TEXT = (245, 245, 245)
 DIM = (150, 150, 150)
 PANEL = (28, 28, 28)
 FONT = cv2.FONT_HERSHEY_DUPLEX
-FLASH_S = 0.25
+FLASH_S = 0.3
+# (fingertip landmark, what pinching it plays, label)
+PINCH_FINGERS = (
+    (LM.INDEX_TIP, Hit.CHORD, "CHORD"),
+    (LM.MIDDLE_TIP, Hit.BASS, "BASS"),
+    (LM.RING_TIP, Hit.ARP, "ARP"),
+)
+PINCH_ROWS = ("thumb + index", "thumb + middle", "thumb + ring")
 
 
 def _panel(img: np.ndarray, x0: int, y0: int, x1: int, y1: int, alpha: float = 0.55) -> None:
@@ -55,7 +64,8 @@ class Overlay:
     def draw(self, img: np.ndarray, snap: Snapshot) -> np.ndarray:
         h, w = img.shape[:2]
         self._skeletons(img, snap)
-        self._strum_zone(img, snap, w, h)
+        self._pinch_marks(img, snap, w, h)
+        self._play_panel(img, snap, w)
         self._chord_ladder(img, snap, w, h)
         self._header(img, snap, w)
         self._ribbon(img, snap, w, h)
@@ -73,21 +83,46 @@ class Overlay:
             for p in pts:
                 cv2.circle(img, tuple(p), 3, TEXT, -1, cv2.LINE_AA)
 
-    def _strum_zone(self, img, snap: Snapshot, w: int, h: int) -> None:
-        y = int(snap.strum_line_y * h)
+    def _pinch_marks(self, img, snap: Snapshot, w: int, h: int) -> None:
+        hand = next((hd for hd in snap.hands if hd.side is not snap.harmony_side), None)
+        if hand is not None:
+            pts = (hand.landmarks[:, :2] * (w, h)).astype(int)
+            thumb = (int(pts[LM.THUMB_TIP][0]), int(pts[LM.THUMB_TIP][1]))
+            ratios = snap.pinch_ratios or (9.0,) * 4
+            for i, (tip_idx, kind, label) in enumerate(PINCH_FINGERS):
+                tip = (int(pts[tip_idx][0]), int(pts[tip_idx][1]))
+                near = min(max(1.0 - (ratios[i] - snap.pinch_on) / 0.8, 0.0), 1.0)  # 0 far .. 1 at the trigger point
+                active = snap.pinch_active is kind
+                color = ACCENT if active else tuple(int(d + (p - d) * near) for d, p in zip(DIM, PLAY_COLOR))
+                cv2.line(img, thumb, tip, color, 1 + int(3 * near), cv2.LINE_AA)
+                cv2.circle(img, tip, 16 if active else 11, color, -1 if active else 2, cv2.LINE_AA)
+                (tw, _), _ = cv2.getTextSize(label, FONT, 0.55, 1)
+                lift = 44 if i == 1 else 22  # stagger the middle label so neighbours don't collide
+                _text(img, label, (tip[0] - tw // 2, tip[1] - lift), 0.55, ACCENT if active else TEXT, 2 if active else 1)
         trig = snap.last_trigger
         age = snap.t - trig.t if trig else 1e9
-        flash = max(0.0, 1.0 - age / FLASH_S)
-        color = tuple(int(c * (0.6 + 0.4 * flash) + 255 * 0.0) for c in PLAY_COLOR)
-        cv2.line(img, (0, y), (w, y), color, 2 + int(5 * flash), cv2.LINE_AA)
-        _text(img, "STRUM LINE - swing your hand through it", (w // 2 - 190, y - 10), 0.55, PLAY_COLOR)
-        if trig and flash > 0:
-            size = int(18 + 40 * trig.intensity)
-            cx = int(trig.x * w)
-            tip, base = (y + size, y - size) if trig.direction.value == "down" else (y - size, y + size)
-            tri = np.array([[cx, tip], [cx - size, base], [cx + size, base]], dtype=np.int32)
-            cv2.fillPoly(img, [tri], ACCENT, cv2.LINE_AA)
-            _text(img, f"vel {trig.velocity}", (cx - 30, y + size + 26 if trig.direction.value == "down" else y - size - 14), 0.55, ACCENT)
+        if trig and age < FLASH_S:
+            frac = age / FLASH_S
+            centre = (int(trig.pos[0] * w), int(trig.pos[1] * h))
+            cv2.circle(img, centre, int(20 + 60 * frac), ACCENT, max(1, int(7 * (1 - frac))), cv2.LINE_AA)
+
+    def _play_panel(self, img, snap: Snapshot, w: int) -> None:
+        x0 = w - 236 if snap.harmony_side is Side.LEFT else 16
+        _panel(img, x0 - 8, 90, x0 + 220, 90 + 38 * 3 + 112)
+        _text(img, "PLAYING HAND", (x0, 118), 0.55, PLAY_COLOR)
+        for i, ((_tip, kind, label), what) in enumerate(zip(PINCH_FINGERS, PINCH_ROWS)):
+            y = 150 + i * 38
+            on = snap.pinch_active is kind
+            if on:
+                cv2.rectangle(img, (x0 - 4, y - 24), (x0 + 210, y + 8), PLAY_COLOR, -1)
+            col = (20, 20, 20) if on else TEXT
+            _text(img, what.replace("thumb + ", "+ "), (x0, y), 0.55, col)
+            _text(img, label, (x0 + 120, y), 0.7, col, 2)
+        _text(img, "hold = sustain", (x0, 150 + 3 * 38 + 4), 0.5, DIM)
+        _text(img, "let go = stop", (x0, 150 + 3 * 38 + 26), 0.5, DIM)
+        trig = snap.last_trigger
+        if trig and snap.t - trig.t < 0.8:  # keep the strength readout visible long enough to read
+            _text(img, f"{trig.kind.value.upper()}  strength {trig.velocity}", (x0, 90 + 38 * 3 + 112 + 30), 0.6, ACCENT, 2)
 
     def _chord_ladder(self, img, snap: Snapshot, w: int, h: int) -> None:
         left = snap.harmony_side is Side.LEFT
@@ -142,7 +177,7 @@ class Overlay:
     def _ribbon(self, img, snap: Snapshot, w: int, h: int) -> None:
         _panel(img, 0, h - 84, w, h, 0.65)
         if snap.mode != "sequence":
-            hint = "1/2 instrument   m sequence mode   ,/. transpose   n major/minor   [ ] strum line   q quit"
+            hint = "1/2 instrument   m sequence mode   ,/. transpose   n major/minor   [ ] pinch sensitivity   q quit"
             _text(img, hint, (16, h - 32), 0.55, DIM)
             return
         _text(img, f"SEQUENCE {snap.sequence_name} - highlighted note plays next".replace("  ", " "), (16, h - 54), 0.5, DIM)
